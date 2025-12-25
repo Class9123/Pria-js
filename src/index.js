@@ -15,12 +15,7 @@ Object.defineProperties(Node.prototype, {
     }
   }
 });
-import App from "./App.pri";
-const start = performance.now();
+import App from "./App.jsx";
 const root = document.getElementById("app");
 App(root.firstElementChild);
 root.style.display = "";
-
-console.log("-----+--♥️------");
-const end = performance.now();
-console.log(`Timen taken To load ${(end - start).toFixed(7)}ms`);
