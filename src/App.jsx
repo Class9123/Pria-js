@@ -1,9 +1,10 @@
+import _$ from "pria/internal"
 
-function App(){
-  return <p>
-    Hello
-  </p>
+export function Header(_$root) {
+  const t = 79
+  return <h1 t={t} $if={t>3}>
+    
+  </h1>
 }
 
-export default App ;
-
+export default Header;

@@ -14,14 +14,15 @@ export default function Scan() {
     transformIndexHtml(indexHtml) {
       let html 
       const data = scanAndCache(rootFile);
-      if (data) html = data.html 
+
+      if (data) html = data.html["default"] 
       else html = "Dev time"
 
       indexHtml = indexHtml.replace(
         /<div id="app">\s*<\/div>/,
         `<div id="app">${html}</div> 
         <script> 
-        //console.log(\`${html}\`)
+        console.log(\`${html}\`)
         </script>`
       );
       return indexHtml
@@ -31,14 +32,15 @@ export default function Scan() {
       if (!id.endsWith(".jsx")) return null;
       const absFile = id;
       const data = scanAndCache(absFile);
-      
       let script ;
-      if (data) script = data.script
+      if (data) script = data.script 
       else script=`
       export default function App(){
         console.log("Dev time ")
       }
       `
+      
+      console.log(script)
       return script;
     },
     handleHotUpdate( {
