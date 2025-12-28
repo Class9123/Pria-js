@@ -4,11 +4,9 @@ import tr from "@babel/traverse";
 const traverse = tr.default
 import * as t from "@babel/types";
 import generate from "@babel/generator"
-import {
-  cacheMap
-} from "../pria-plugin/scanComponent.js"
 import build from "./transformer.js"
 
+const str = (d) => JSON.stringify(d, null, 1)
 
 function hasJsxReturn(fnPath) {
   let found = false;
@@ -33,6 +31,46 @@ function hasJsxReturn(fnPath) {
   return found;
 }
 
+function ensurePriyInternalImport(ast) {
+  const body = ast.program.body;
+
+  // 1️⃣ Check if already imported
+  for (const node of body) {
+    if (
+      t.isImportDeclaration(node) &&
+      node.source.value === "pria/internal"
+    ) {
+      // reuse existing default import name
+      const def = node.specifiers.find(s =>
+        t.isImportDefaultSpecifier(s)
+      );
+      return def?.local.name || null;
+    }
+  }
+
+  // 2️⃣ Not imported → inject
+  const localName = "_$";
+
+  const importDecl = t.importDeclaration(
+    [t.importDefaultSpecifier(t.identifier(localName))],
+    t.stringLiteral("pria/internal")
+  );
+
+  // 3️⃣ Insert after last import
+  let insertIndex = 0;
+  while (
+    insertIndex < body.length &&
+    t.isImportDeclaration(body[insertIndex])
+  ) {
+    insertIndex++;
+  }
+
+  body.splice(insertIndex, 0, importDecl);
+
+  return localName;
+}
+
+
 export default function compilePria(code, filePath) {
 
   const ast = parser.parse(code,
@@ -41,9 +79,10 @@ export default function compilePria(code, filePath) {
       plugins: ["jsx"],
     });
 
+  ensurePriyInternalImport(ast)
+
   const exportedFunctionPaths = new Map();
   let defaultExportName = null;
-
 
   traverse(ast,
     {
@@ -120,9 +159,10 @@ export default function compilePria(code, filePath) {
     });
 
   const output = {
-    html:{}
+    html: {},
+    script: ""
   };
-  let jsCode ; 
+  let jsCode;
 
   for (const [name, fnPath] of exportedFunctionPaths.entries()) {
     const jsxResults = [];
@@ -130,11 +170,19 @@ export default function compilePria(code, filePath) {
     fnPath.traverse({
       JSXElement(path) {
         const {
-          html, script
-        } = build(jsxToCustomAst(path.node), [], "")
-        const wrapped = ` ( function (){ ${script}} )() `
+          html, script, deps
+        } = build(path, filePath)
+
+        const wrapped = ` ( function (){
+          const _$root = _$.getParent()
+          ${script}
+        } )() `
+
         const newAst = parser.parseExpression(wrapped)
-        output.html["default"] = html
+        output.html[name] =  {
+          html,
+          deps
+        }
         path.replaceWith(newAst)
       },
     });
@@ -144,121 +192,8 @@ export default function compilePria(code, filePath) {
   const outputCode = generate.default(ast,
     {},
     code).code;
+  
   output.script = outputCode
-    
+
   return output;
 }
-
-
-  function getJsxTypeName(name) {
-    if (t.isJSXIdentifier(name)) {
-      return name.name;
-    }
-
-    if (t.isJSXMemberExpression(name)) {
-      return `${getJsxTypeName(name.object)}.${getJsxTypeName(name.property)}`;
-    }
-
-    if (t.isJSXNamespacedName(name)) {
-      return `${name.namespace.name}:${name.name.name}`;
-    }
-
-    return null;
-  }
-
-  function getAttrName(name) {
-    if (t.isJSXIdentifier(name)) {
-      return name.name;
-    }
-
-    if (t.isJSXNamespacedName(name)) {
-      return `${name.namespace.name}:${name.name.name}`;
-    }
-
-    return null;
-  }
-
-  function jsxToCustomAst(node) {
-    // ---------- Text ----------
-    if (t.isJSXText(node)) {
-      const text = node.value;
-      if (!text.trim()) return null;
-
-      return {
-        type: "#grouped",
-        children :[
-          { type:"#text", nodeValue: text }
-        ]
-      };
-    }
-
-    // ---------- Expressions ----------
-    if (t.isJSXExpressionContainer(node)) {
-      return {
-        type: "#jsx",
-        nodeValue: generate.default(node.expression).code
-      };
-    }
-
-    // ---------- JSX Element (div, motion.div, Component) ----------
-    if (t.isJSXElement(node)) {
-      const opening = node.openingElement;
-      const typeName = getJsxTypeName(opening.name);
-
-      let props = {};
-      for (const attr of opening.attributes) {
-        if (t.isJSXSpreadAttribute(attr)) {
-          props[attr.argument.name] = {
-            type: "#spread",
-            nodeValue: attr.argument.name
-          }
-        }
-        if (!t.isJSXAttribute(attr)) continue;
-
-        const key = getAttrName(attr.name);
-
-        if (!attr.value) {
-          props[key] = true;
-          continue;
-        }
-
-        if (t.isStringLiteral(attr.value)) {
-          props[key] = attr.value.value;
-          continue;
-        }
-
-        if (t.isJSXExpressionContainer(attr.value)) {
-          props[key] = {
-            type: "#jsx",
-            nodeValue: generate.default(attr.value.expression).code
-          };
-        }
-      }
-
-      const children = node.children
-      .map(jsxToCustomAst)
-      .filter(Boolean);
-
-      return {
-        type: typeName,
-        // motion.div, div, Component
-        props,
-        children
-      };
-    }
-
-    // ---------- JSX Fragment <>...</> ----------
-    if (t.isJSXFragment(node)) {
-      const children = node.children
-      .map(jsxToCustomAst)
-      .filter(Boolean);
-
-      return {
-        type: "fragment",
-        props: {},
-        children
-      };
-    }
-
-    return null;
-  }

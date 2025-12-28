@@ -16,6 +16,8 @@ Object.defineProperties(Node.prototype, {
   }
 });
 import App from "./App.jsx";
+import _$ from "pria/internal"
 const root = document.getElementById("app");
-App(root.firstElementChild);
+_$.setParent(root.firstElementChild)
+App();
 root.style.display = "";

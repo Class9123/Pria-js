@@ -1,5 +1,6 @@
 import scanAndCache from "./pria-plugin/scanComponent.js";
 import fs from "fs";
+import addComponentHtml from "./compiler/helpers/addhtml.js"
 
 export default function Scan() {
   const rootFile = "/data/data/com.termux/files/home/Pria-js/src/App.jsx";
@@ -15,7 +16,9 @@ export default function Scan() {
       let html 
       const data = scanAndCache(rootFile);
 
-      if (data) html = data.html["default"] 
+      if (data) {
+        html = addComponentHtml(data, "App")
+      }
       else html = "Dev time"
 
       indexHtml = indexHtml.replace(
@@ -39,8 +42,7 @@ export default function Scan() {
         console.log("Dev time ")
       }
       `
-      
-      console.log(script)
+
       return script;
     },
     handleHotUpdate( {

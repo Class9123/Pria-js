@@ -1,17 +1,44 @@
-import {
-  getTagName,
-  isElement,
-  isText,
-  isJsx,
-  isComponentTag,
-  getText
-} from "./helpers/index.js";
 import uidGenerator from "./helpers/uid.js";
 import Conditional from "./processor/conditional.js";
 import LoopPr from "./processor/loopPr.js";
-import ComponentPr from "./processor/componentPr.js";
+import generate from "@babel/generator"
+import * as t from "@babel/types"
+import {
+  formatJs,
+  resolveImportedPath,
+  isComponentTag
+} from "./helpers/index.js"
+const str = (d) => JSON.stringify(d, null, 2)
+
 
 class Transformer {
+  buildLogicalChildPaths(childPaths) {
+    const logical = [];
+    let buffer = [];
+
+    const flush = () => {
+      if (buffer.length) {
+        logical.push(buffer);
+        buffer = [];
+      }
+    };
+
+    for (const childPath of childPaths) {
+      if (
+        childPath.isJSXText() ||
+        childPath.isJSXExpressionContainer()
+      ) {
+        buffer.push(childPath);
+      } else {
+        flush();
+        logical.push(childPath);
+      }
+    }
+
+    flush();
+    return logical;
+  }
+
   joinPath() {
     for (let i = this.path.length - 1; i >= 0; i--) {
       const it = this.path[i];
@@ -24,146 +51,136 @@ class Transformer {
     this.obj.script += js + "\n";
   }
 
-  process(node) {
-    if (!node) return;
+  process(path) {
+    if (!path) return;
 
-    // === Handle text+jsx sequence merging ===
-    if (node.type === "#grouped") {
-      let textExpr = "";
-      let htmlText = "";
-      let hasJsx = false;
-      let hasText = false;
-      
-      node.children.forEach((child, i) => {
-        if (isText(child)) {
-          htmlText += getText(child);
-          textExpr += `${i === 0 ? "": "+"} ${JSON.stringify(getText(child))}`;
-          hasText = true;
-        } else if (isJsx(child)) {
-          hasJsx = true;
-          textExpr += `${i === 0 ? "": "+"} String(${getText(child)}) `;
+    // 🔹 GROUP (array of NodePaths)
+    if (Array.isArray(path)) {
+      const id = this.uidGen.nextTextNode();
+      let hasExpr = false;
+
+      const expr = path.map(p => {
+        if (p.isJSXText()) {
+          this.obj.html += p.node.value;
+          return JSON.stringify(p.node.value);
         }
-      });
 
-      this.obj.html += htmlText;
-      if (hasJsx) {
-        const id = this.uidGen.nextTextNode();
+        hasExpr = true;
+        return generate.default(p.node.expression).code;
+      }).join(" + ");
+
+      if (hasExpr) {
+        this.obj.html += " ";
         this.add(`
           const ${id} = ${this.joinPath()}
           _$.useEffect(()=>{
-          ${id}.nodeValue = ${textExpr};
+          ${id}.nodeValue = ${expr};
           });
           `);
       }
-      if (!hasText) {
-        this.obj.html += " ";
-      }
+
+      return;
     }
 
-    // === Element Node ===
-    else if (isElement(node)) {
-      const isVoid = node.isVoidTag
-      const tag = getTagName(node);
-      const specialAttr = []
-      const normalAttr = [];
-      const configuration = {
-        shouldProcessChildren: true
-      };
-
-      for (const [key, value] of Object.entries(node.props)) {
-        if (key.startsWith("$") || key.includes(":")) {
-          specialAttr.push([key, value]);
-        } else {
-          normalAttr.push([key, value]);
-        }
-      }
+    // 🔹 JSX ELEMENT
+    if (path.isJSXElement()) {
+      const node = path.node;
+      const opening = node.openingElement;
+      const tag = opening.name.name;
+      const isVoid = opening.selfClosing;
 
       if (isComponentTag(tag)) {
-        this.processors["component"].process(node);
+        const binding = path.scope.getBinding(tag)
+        if (binding.path.isImportDefaultSpecifier() === true || binding.path.isImportSpecifier() === true) {} else {
+          this.obj.deps.push({
+            filePath: "self" , 
+            name : tag
+          })
+        }
+        const id = this.uidGen.nextElement();
+        this.add(`
+        const ${id} = ${this.joinPath()}
+        _$.setParent(${id})
+         ${tag}()
+        `)
+        this.obj.html += `<${tag}/>`;
+
         return;
       }
 
       this.obj.html += `<${tag}`;
 
-      normalAttr.forEach(([key, value]) => {
-        if (isJsx(value)) {
-          const expr = getText(value);
+      opening.attributes.forEach(attr => {
+        if (t.isStringLiteral(attr.value)) {
+          this.obj.html += ` ${attr.name.name}="${attr.value.value}" `;
+        }
+
+        if (t.isJSXExpressionContainer(attr.value)) {
+          const key = attr.name.name;
+          const expr = generate.default(attr.value.expression).code;
           const id = this.uidGen.nextElement();
+
           this.add(`
             const ${id} = ${this.joinPath()}
             _$.useEffect(()=>{
             ${id}.setAttribute("${key}", ${expr});
             });
             `);
-        } else if (typeof value !== "object") {
-          this.obj.html += ` ${key}="${value}"`;
         }
       });
-      if (!isVoid) this.obj.html += ">";
-      else this.obj.html += "/>"
 
-      for (let i = 0; i < specialAttr.length; i++) {
-        const arr = specialAttr[i]
-        const name = arr[0];
-        const propVl = arr[1].nodeValue;
-        const id = this.uidGen.nextElement();
-        if (name.includes(":") && name.split(":")[0] === "on") {
-          this.add(`
-            const ${id} = ${this.joinPath()}
-            _$.useEffect(()=>{
-            ${id}.on${name.split(":")[1]} = ${propVl}
-            })
-            `)
-        } else if (name.startsWith("$")) {
-          configuration.shouldProcessChildren = this.processors[name].process(node, propVl).shouldProcessChildren
-        }
+      if (isVoid) {
+        this.obj.html += "/>";
+        return;
       }
 
-      if (configuration.shouldProcessChildren)
-        this.processChildren(node.children);
-      if (!isVoid) this.obj.html += `</${tag}>`;
+      this.obj.html += `>`;
+      this.processChildren(path);
+      this.obj.html += `</${tag}>`;
     }
   }
 
-  processChildren(children) {
+  processChildren(parentPath) {
+    const childPaths = parentPath.get("children");
+    const logicalChildren = this.buildLogicalChildPaths(childPaths);
+
     const pathCopy = [...this.path];
-    for (let i = 0; i < children.length; i++) {
+
+    for (let i = 0; i < logicalChildren.length; i++) {
       if (this.path.length % 6 === 0) {
         const id = this.uidGen.nextRefrence();
-        this.add(`
-          const ${id} = ${this.joinPath()}
-          `);
+        this.add(`const ${id} = ${this.joinPath()}`);
         this.path.push(id);
       }
-      if (i === 0) this.path.push("f");
-      else this.path.push("n");
 
-      const child = children[i];
-      this.process(child);
+      this.path.push(i === 0 ? "f": "n");
+      this.process(logicalChildren[i]); // ✅ group OR NodePath
     }
+
     this.path = pathCopy;
   }
 
-  transform(ast, priImports, filePath) {
+  transform(jsXpath, filePath) {
     this.processors = {
       $if: new Conditional(this),
-      $for: new LoopPr(this),
-      component: new ComponentPr(this)
+      $for: new LoopPr(this)
     };
     this.filePath = filePath;
-    this.priImports = priImports;
     this.obj = {
       html: "",
-      script: ""
+      script: "",
+      deps: []
     };
     this.path = ["_$root"];
     this.uidGen = uidGenerator();
-    this.process(ast);
+
+    this.process(jsXpath);
+
     return this.obj;
   }
 }
 
-export default function build(HtmlAst, priImports, absFilePath) {
+export default function build(jsXpath, priImports, absFilePath) {
   const transformer = new Transformer();
-  return transformer.transform(HtmlAst, priImports, absFilePath);
+  return transformer.transform(jsXpath, absFilePath);
 }

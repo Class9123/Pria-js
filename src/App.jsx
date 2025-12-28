@@ -1,10 +1,26 @@
-import _$ from "pria/internal"
+import {
+  useState
+} from "pria"
 
-export function Header(_$root) {
-  const t = 79
-  return <h1 t={t} $if={t>3}>
-    
-  </h1>
+export function Nav() {
+  return <nav>
+    Navbar here
+    {50}
+  </nav>
 }
 
-export default Header;
+export function Header() {
+  return <header>
+    This is the fucking header
+    <Nav />
+  </header>
+}
+
+export function App() {
+  return <div>
+    <Header />
+    This is the App {50}
+  </div>
+}
+
+export default App;
