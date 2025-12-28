@@ -20,7 +20,7 @@ export default function Scan() {
         html = addComponentHtml(data, "App")
       }
       else html = "Dev time"
-
+      console.log(html)
       indexHtml = indexHtml.replace(
         /<div id="app">\s*<\/div>/,
         `<div id="app">${html}</div> 
@@ -42,6 +42,8 @@ export default function Scan() {
         console.log("Dev time ")
       }
       `
+      
+      console.log(script)
 
       return script;
     },

@@ -66,7 +66,7 @@ class Transformer {
         }
 
         hasExpr = true;
-        return generate.default(p.node.expression).code;
+        return `String(${generate.default(p.node.expression).code})`
       }).join(" + ");
 
       if (hasExpr) {

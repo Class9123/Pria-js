@@ -11,15 +11,21 @@ export function Nav() {
 
 export function Header() {
   return <header>
-    This is the fucking header
+    This is the header
     <Nav />
   </header>
 }
 
 export function App() {
-  return <div>
+  const [count,
+    setCount] = useState(0)
+  setInterval(()=> {
+    setCount(p => p+ 1)
+  }, 600)
+  return <div class="flex justify-center bg-red-100 h-screen w-screen">
+    Hello
     <Header />
-    This is the App {50}
+    {count() + 90 }
   </div>
 }
 

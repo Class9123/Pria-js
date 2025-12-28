@@ -19,7 +19,6 @@ export default function addHtml(obj, cmpName) {
       cmpHtml = addHtml(obj, name)
     }
     html = html.replace(`<${name}/>`, cmpHtml )
-    console.log(html)
   })
   
   return html
