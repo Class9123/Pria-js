@@ -99,7 +99,7 @@ div (root)
 
 1. **HTML output:**
    ```html
-   <div><h1>Count</h1><p>0</p></div>
+   <div><h1>Count</h1><p></p></div>
    ```
 
 2. **JavaScript output:**
@@ -145,21 +145,21 @@ For every dynamic piece, Pria:
 - Generates an update function that follows that path
 
 ### 6. **Output**
-Two files are created:
-- `component.html` — The static HTML markup
-- `component.js` — The reactive update logic
+Two phases are made:
+- `static html` — The static HTML markup
+- `javascript for reactivity setup` — The reactive update logic
 
 ---
 
-## Output Format
+zhzx## Output Format
 
 Pria separates concerns clearly:
 
 ### HTML Output (Per Component)
 
 ```html
-<!-- Counter.html -->
-<div><h1>Counter</h1><p>0</p></div>
+<!-- html -->
+<div><h1>Counter</h1><p></p></div>
 ```
 
 This HTML can be:
@@ -171,20 +171,15 @@ This HTML can be:
 ### JavaScript Output (Per File)
 
 ```javascript
-// Counter.js
-function setupCounter(root, initialCount) {
-  // Navigate to the dynamic text node
+// Reactive JavaScript 
+function Counter() {
+  const [count, setCount] = useState(0)
   let countNode = root.firstChild.nextSibling.firstChild;
   
   // Update function
-  function updateCount(newValue) {
-    countNode.textContent = newValue;
-  }
-  
-  // Initial setup
-  updateCount(initialCount);
-  
-  return { updateCount };
+  _$.useEffect(() => {
+    countNode.nodeValue = count();
+  })
 }
 ```
 
@@ -214,32 +209,9 @@ function Counter() {
 
 ```html
 <div>
-  <h1>Count: 0</h1>
+  <h1>Count: </h1>
   <button>Increment</button>
 </div>
-```
-
-### Output: Generated JavaScript
-
-```javascript
-function setupCounter(root, count) {
-  // Path to the text node inside <h1>
-  // root -> div -> h1 -> firstChild (text "Count: ")
-  // -> nextSibling (dynamic text node)
-  let countNode = root.firstChild.firstChild;
-  
-  // Find the dynamic part after "Count: "
-  while (countNode && countNode.nodeType !== 3) {
-    countNode = countNode.nextSibling;
-  }
-  
-  function updateCount(newValue) {
-    countNode.textContent = 'Count: ' + newValue;
-  }
-  
-  updateCount(count);
-  return { updateCount };
-}
 ```
 
 ---
