@@ -1,5 +1,4 @@
 import {
-  getTagName,
   resolveImportedPath
 } from "../helpers/index.js";
 import scanAndCache from "../../pria-plugin/scanComponent.js"
@@ -9,7 +8,8 @@ class ComponentProcessor {
     this.core = core;
   }
   process(node) {
-    const tag = getTagName(node)
+    const opening = node.openingElement
+    const tag = opening.name.name
     const core = this.core;
     const path = resolveImportedPath(core.filePath, core.priImports[tag]);
     const obj = scanAndCache(path);

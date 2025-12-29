@@ -15,12 +15,9 @@ Object.defineProperties(Node.prototype, {
     }
   }
 });
-import App from "./App.pri";
-const start = performance.now();
+import App from "./App.jsx";
+import _$ from "pria/internal"
 const root = document.getElementById("app");
-App(root.firstElementChild);
+_$.setParent(root.firstElementChild)
+App();
 root.style.display = "";
-
-console.log("-----+--♥️------");
-const end = performance.now();
-console.log(`Timen taken To load ${(end - start).toFixed(7)}ms`);

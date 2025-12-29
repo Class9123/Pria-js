@@ -1,8 +1,9 @@
 import scanAndCache from "./pria-plugin/scanComponent.js";
 import fs from "fs";
+import addComponentHtml from "./compiler/helpers/addhtml.js"
 
 export default function Scan() {
-  const rootFile = "/data/data/com.termux/files/home/Pria-js/src/App.pri";
+  const rootFile = "/data/data/com.termux/files/home/Pria-js/src/App.jsx";
 
   return {
     name: "vite-scan-priaJs-plugin",
@@ -12,10 +13,14 @@ export default function Scan() {
     },
 
     transformIndexHtml(indexHtml) {
-      const {
-        html
-      } = scanAndCache(rootFile);
+      let html 
+      const data = scanAndCache(rootFile);
 
+      if (data) {
+        html = addComponentHtml(data, "App")
+      }
+      else html = "Dev time"
+      console.log(html)
       indexHtml = indexHtml.replace(
         /<div id="app">\s*<\/div>/,
         `<div id="app">${html}</div> 
@@ -23,26 +28,29 @@ export default function Scan() {
         console.log(\`${html}\`)
         </script>`
       );
-  
       return indexHtml
     },
 
     load(id) {
-      if (!id.endsWith(".pri")) return null;
+      if (!id.endsWith(".jsx")) return null;
       const absFile = id;
       const data = scanAndCache(absFile);
-
-      const {
-        script
-      } = data;
+      let script ;
+      if (data) script = data.script 
+      else script=`
+      export default function App(){
+        console.log("Dev time ")
+      }
+      `
+      
       console.log(script)
+
       return script;
     },
     handleHotUpdate( {
       file, server, modules
     }) {
-      if (!file.endsWith(".pri")) return [];
-      console.log("Called")
+      if (!file.endsWith(".jsx")) return [];
       scanAndCache(file)
       server.restart()
     }

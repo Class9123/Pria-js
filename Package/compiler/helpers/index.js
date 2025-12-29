@@ -1,4 +1,6 @@
+import path from 'path';
 import pkg from "js-beautify";
+
 const { js: beautifyJs, html: beautifyHtml } = pkg;
 export function formatJs(js) {
   const prettyJs = beautifyJs(js, {
@@ -57,7 +59,6 @@ export {
 };
 
 
-import path from 'path';
 
 /**
  * Resolve absolute path of imported file (ESM)
