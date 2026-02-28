@@ -1,32 +1,37 @@
-import {
-  useState
-} from "pria"
+import { useState, useArray, useMemo, useEffect } from "pria";
 
-export function Nav() {
-  return <nav>
-    Navbar here
-    {50}
-  </nav>
+function Badge() {
+  return <strong>Badge</strong>;
 }
 
-export function Header() {
-  return <header>
-    This is the header
-    <Nav />
-  </header>
-}
+export default function App() {
+  const [count, setCount] = useState(0);
+  const todos = useArray(["Ship", "Sleep"]);
+  const titleRef = { current: null };
 
-export function App() {
-  const [count,
-    setCount] = useState(0)
-  setInterval(()=> {
-    setCount(p => p+ 1)
-  }, 600)
-  return <div class="flex justify-center bg-red-100 h-screen w-screen">
-    Hello
-    <Header />
-    {count() + 90 }
-  </div>
-}
+  const status = useMemo(() => (count() > 3 ? "busy" : "chill"));
+  const spread ={ class:"text-red-900" ,id:"4"}
 
-export default App;
+  useEffect(() => {
+    console.log("status:", status());
+  }, [status]);
+
+  return (
+    <main>
+      <h1 {...spread} $ref={titleRef}>Count: {count()}</h1>
+
+      <p $when={count() % 2 === 0}>Visible only on even counts</p>
+      <p $if={count() > 2}>Appears only after 2</p>
+
+      <button onClick={() => setCount(p => p + 1)}>+1</button>
+      <button onClick={() => todos.push(`Todo ${count()}`)}>Add Todo</button>
+      <button onClick={() => todos.setNew(["Reset"])}>Reset List</button>
+
+      <ul>
+        <li $for={tod in todos()}>
+          <Badge /> {tod}
+        </li>
+      </ul>
+    </main>
+  );
+}

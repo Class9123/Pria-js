@@ -1,4 +1,5 @@
 import path from 'path';
+import fs from "fs";
 import pkg from "js-beautify";
 
 const { js: beautifyJs, html: beautifyHtml } = pkg;
@@ -68,5 +69,17 @@ export {
  */
 export function resolveImportedPath(importerAbsPath, importedRelPath) {
   const importerDir = path.dirname(importerAbsPath);
-  return path.resolve(importerDir, importedRelPath);
+  const absBase = path.resolve(importerDir, importedRelPath);
+  const candidates = [
+    absBase,
+    `${absBase}.jsx`,
+    `${absBase}.js`,
+    path.join(absBase, "index.jsx"),
+    path.join(absBase, "index.js")
+  ];
+
+  for (const file of candidates) {
+    if (fs.existsSync(file) && fs.statSync(file).isFile()) return file;
+  }
+  return absBase;
 }

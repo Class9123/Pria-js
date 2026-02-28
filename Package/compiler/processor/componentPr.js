@@ -1,38 +1,68 @@
-import {
-  resolveImportedPath
-} from "../helpers/index.js";
-import scanAndCache from "../../pria-plugin/scanComponent.js"
+import generate from "@babel/generator";
+import * as t from "@babel/types";
 
 class ComponentProcessor {
   constructor(core) {
     this.core = core;
   }
-  process(node) {
-    const opening = node.openingElement
-    const tag = opening.name.name
-    const core = this.core;
-    const path = resolveImportedPath(core.filePath, core.priImports[tag]);
-    const obj = scanAndCache(path);
 
-    core.obj.html += obj.html;
-    const id = core.uidGen.nextElement();
-    let props = "{ ";
-    for (const key in node.props) {
-      const valueNode = node.props[key];
-      if (valueNode.type === "#jsx") {
-        props += ` '${key}': ${valueNode.nodeValue}, `;
-      } else {
-        props += ` '${key}':'${valueNode}' ,`;
+  buildPropsExpression(path) {
+    const attrs = path.node.openingElement.attributes || [];
+    const parts = [];
+
+    for (const attr of attrs) {
+      if (t.isJSXSpreadAttribute(attr)) {
+        const spreadExpr = generate.default(attr.argument).code;
+        parts.push(`...(${spreadExpr} || {})`);
+        continue;
+      }
+
+      if (!t.isJSXAttribute(attr) || !t.isJSXIdentifier(attr.name)) continue;
+      const key = attr.name.name;
+      if (key.startsWith("$")) continue;
+
+      if (attr.value == null) {
+        parts.push(`${JSON.stringify(key)}: true`);
+        continue;
+      }
+
+      if (t.isStringLiteral(attr.value)) {
+        parts.push(`${JSON.stringify(key)}: ${JSON.stringify(attr.value.value)}`);
+        continue;
+      }
+
+      if (t.isJSXExpressionContainer(attr.value)) {
+        const expr = generate.default(attr.value.expression).code;
+        parts.push(`${JSON.stringify(key)}: (${expr})`);
       }
     }
-    props += "}";
+
+    if (!parts.length) return null;
+    return `({ ${parts.join(", ")} })`;
+  }
+
+  process(path) {
+    const opening = path.node.openingElement;
+    const tag = opening.name.name;
+    const core = this.core;
+    const dep = core.resolveComponentDep(path, tag);
+    const placeholder = `<!--__PRIA_CMP_${core.uidGen.nextComment()}__-->`;
+    core.obj.deps.push({
+      ...dep,
+      placeholder
+    });
+
+    const id = core.uidGen.nextElement();
+    const propsExpr = this.buildPropsExpression(path);
 
     core.add(`
-        const ${id} = ${core.joinPath()}
-         ${tag}(${id}, ${props})
-        `);
+      const ${id} = ${core.joinPath()}
+      _$.setParent(${id})
+      ${propsExpr ? `${tag}(${propsExpr})` : `${tag}()`}
+    `);
+
+    core.obj.html += placeholder;
   }
 }
-
 
 export default ComponentProcessor;

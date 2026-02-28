@@ -23,8 +23,18 @@ export function useState(initialValue) {
 }
 
 export function useArray(initialValue = []) {
-  const array = [...initialValue];
+  const array = Array.isArray(initialValue) ? [...initialValue] : [];
   const effects = new Set();
+  const trigger = config => {
+    const newEffects = [];
+    for (const obj of effects) {
+      newEffects.push({
+        fn: () => obj.fn(config),
+        cleanup: obj.cleanup
+      });
+    }
+    queueEffect(newEffects);
+  };
   const getter = () => {
     if (currentEffect) {
       effects.add(currentEffect);
@@ -32,53 +42,47 @@ export function useArray(initialValue = []) {
     return array;
   };
 
-  getter.push = item => { 
+  getter.push = item => {
     array.push(item);
-    const newEffects = [];
-    for (const obj of effects)
-      newEffects.push({
-        fn: () =>
-          obj.fn({
-            push: true,
-            index: array.length - 1
-          }),
-        cleanup: obj.cleanup
-      });
-    queueEffect(newEffects);
+    trigger({
+      push: true,
+      index: array.length - 1
+    });
   };
 
   getter.setAt = (index, item) => {
+    if (index < 0 || index >= array.length) return;
     array[index] = item;
-    const newEffects = [];
-    for (const obj of effects)
-      newEffects.push({
-        fn: () =>
-          obj.fn({
-            setAt: true,
-            index: index
-          }),
-        cleanup: obj.cleanup
-      });
-    queueEffect(newEffects);
+    trigger({
+      setAt: true,
+      index
+    });
   };
 
   getter.remove = index => {
+    if (index < 0 || index >= array.length) return;
     array.splice(index, 1);
-    const newEffects = [];
-    for (const obj of effects)
-      newEffects.push({
-        fn: () =>
-          obj.fn({
-            remove: true,
-            index: index
-          }),
-        cleanup: obj.cleanup
-      });
-    queueEffect(newEffects);
-  }; 
+    trigger({
+      remove: true,
+      index
+    });
+  };
 
   getter.pop = () => {
+    if (!array.length) return;
     getter.remove(array.length - 1);
+  };
+
+  getter.setNew = next => {
+    const resolved = typeof next === "function" ? next([...array]) : next;
+    if (!Array.isArray(resolved)) {
+      throw new Error("useArray.setNew expects an array or updater function.");
+    }
+    array.length = 0;
+    for (let i = 0; i < resolved.length; i++) array.push(resolved[i]);
+    trigger({
+      setNew: true
+    });
   };
 
   return getter;

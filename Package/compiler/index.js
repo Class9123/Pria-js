@@ -1,31 +1,33 @@
-import fs from "fs";
 import parser from "@babel/parser";
 import tr from "@babel/traverse";
-const traverse = tr.default
+const traverse = tr.default;
 import * as t from "@babel/types";
-import generate from "@babel/generator"
-import build from "./transformer.js"
-
-const str = (d) => JSON.stringify(d, null, 1)
+import generate from "@babel/generator";
+import build from "./transformer.js";
 
 function hasJsxReturn(fnPath) {
   let found = false;
 
-  // implicit return: () => <div />
   if (
     fnPath.isArrowFunctionExpression() &&
-    t.isJSXElement(fnPath.node.body)
+    (t.isJSXElement(fnPath.node.body) || t.isJSXFragment(fnPath.node.body))
   ) {
     return true;
   }
 
   fnPath.traverse({
+    Function(path) {
+      if (path !== fnPath) path.skip();
+    },
     ReturnStatement(path) {
-      if (t.isJSXElement(path.node.argument)) {
+      if (
+        t.isJSXElement(path.node.argument) ||
+        t.isJSXFragment(path.node.argument)
+      ) {
         found = true;
         path.stop();
       }
-    },
+    }
   });
 
   return found;
@@ -33,167 +35,228 @@ function hasJsxReturn(fnPath) {
 
 function ensurePriyInternalImport(ast) {
   const body = ast.program.body;
-
-  // 1️⃣ Check if already imported
-  for (const node of body) {
-    if (
-      t.isImportDeclaration(node) &&
-      node.source.value === "pria/internal"
-    ) {
-      // reuse existing default import name
-      const def = node.specifiers.find(s =>
-        t.isImportDefaultSpecifier(s)
-      );
-      return def?.local.name || null;
-    }
-  }
-
-  // 2️⃣ Not imported → inject
-  const localName = "_$";
-
-  const importDecl = t.importDeclaration(
-    [t.importDefaultSpecifier(t.identifier(localName))],
-    t.stringLiteral("pria/internal")
-  );
-
-  // 3️⃣ Insert after last import
   let insertIndex = 0;
-  while (
-    insertIndex < body.length &&
-    t.isImportDeclaration(body[insertIndex])
-  ) {
+  while (insertIndex < body.length && t.isImportDeclaration(body[insertIndex])) {
     insertIndex++;
   }
 
-  body.splice(insertIndex, 0, importDecl);
+  for (const node of body) {
+    if (t.isImportDeclaration(node) && node.source.value === "pria/internal") {
+      const def = node.specifiers.find(s => t.isImportDefaultSpecifier(s));
+      if (!def) {
+        node.specifiers.unshift(t.importDefaultSpecifier(t.identifier("_$")));
+        return "_$";
+      }
+      if (def.local.name === "_$") return "_$";
 
-  return localName;
+      const aliasDecl = t.variableDeclaration("const", [
+        t.variableDeclarator(t.identifier("_$"), t.identifier(def.local.name))
+      ]);
+      body.splice(insertIndex, 0, aliasDecl);
+      return "_$";
+    }
+  }
+
+  const importDecl = t.importDeclaration(
+    [t.importDefaultSpecifier(t.identifier("_$"))],
+    t.stringLiteral("pria/internal")
+  );
+
+  body.splice(insertIndex, 0, importDecl);
+  return "_$";
 }
 
+function getPathKey(path) {
+  const loc = path.node.loc?.start;
+  const start = path.node.start ?? "na";
+  const line = loc?.line ?? "na";
+  const col = loc?.column ?? "na";
+  return `${path.type}:${start}:${line}:${col}`;
+}
+
+function getBindingKey(bindingPath) {
+  if (bindingPath.isVariableDeclarator()) {
+    return getPathKey(bindingPath.get("init"));
+  }
+  return getPathKey(bindingPath);
+}
+
+function getRootJsxPaths(fnPath) {
+  const roots = [];
+
+  if (
+    fnPath.isArrowFunctionExpression() &&
+    (fnPath.get("body").isJSXElement() || fnPath.get("body").isJSXFragment())
+  ) {
+    roots.push(fnPath.get("body"));
+  }
+
+  fnPath.traverse({
+    Function(path) {
+      if (path !== fnPath) path.skip();
+    },
+    ReturnStatement(path) {
+      const arg = path.get("argument");
+      if (arg.isJSXElement() || arg.isJSXFragment()) roots.push(arg);
+    }
+  });
+
+  return roots;
+}
 
 export default function compilePria(code, filePath) {
+  const ast = parser.parse(code, {
+    sourceType: "module",
+    plugins: ["jsx"]
+  });
 
-  const ast = parser.parse(code,
-    {
-      sourceType: "module",
-      plugins: ["jsx"],
-    });
-
-  ensurePriyInternalImport(ast)
-
-  const exportedFunctionPaths = new Map();
-  let defaultExportName = null;
-
-  traverse(ast,
-    {
-      ExportDefaultDeclaration(path) {
-        const decl = path.node.declaration;
-
-        // export default function () {}
-        if (t.isFunctionDeclaration(decl)) {
-          const fnPath = path.get("declaration");
-          if (hasJsxReturn(fnPath)) {
-            exportedFunctionPaths.set("default", fnPath);
-            defaultExportName = "default";
-          }
-        }
-
-        // export default () => <JSX />
-        if (t.isArrowFunctionExpression(decl)) {
-          const fnPath = path.get("declaration");
-          if (hasJsxReturn(fnPath)) {
-            exportedFunctionPaths.set("default", fnPath);
-            defaultExportName = "default";
-          }
-        }
-
-        // export default App
-        if (t.isIdentifier(decl)) {
-          const binding = path.scope.getBinding(decl.name);
-          if (binding && binding.path.isFunction()) {
-            if (hasJsxReturn(binding.path)) {
-              exportedFunctionPaths.set("default", binding.path);
-              defaultExportName = "default";
-            }
-          }
-        }
-      },
-
-      ExportNamedDeclaration(path) {
-        const decl = path.node.declaration;
-
-        // export function App() {}
-        if (t.isFunctionDeclaration(decl)) {
-          const fnPath = path.get("declaration");
-          if (hasJsxReturn(fnPath)) {
-            exportedFunctionPaths.set(decl.id.name, fnPath);
-          }
-        }
-
-        // export const App = () => {}
-        if (t.isVariableDeclaration(decl)) {
-          for (const d of decl.declarations) {
-            if (
-              t.isIdentifier(d.id) &&
-              (t.isArrowFunctionExpression(d.init) ||
-                t.isFunctionExpression(d.init))
-            ) {
-              const binding = path.scope.getBinding(d.id.name);
-              if (binding && hasJsxReturn(binding.path.get("init"))) {
-                exportedFunctionPaths.set(d.id.name, binding.path.get("init"));
-              }
-            }
-          }
-        }
-
-        // export { App }
-        for (const spec of path.node.specifiers || []) {
-          const binding = path.scope.getBinding(spec.local.name);
-          if (binding && binding.path.isFunction()) {
-            if (hasJsxReturn(binding.path)) {
-              exportedFunctionPaths.set(spec.exported.name, binding.path);
-            }
-          }
-        }
-      },
-    });
+  ensurePriyInternalImport(ast);
 
   const output = {
     html: {},
     script: ""
   };
-  let jsCode;
 
-  for (const [name, fnPath] of exportedFunctionPaths.entries()) {
-    const jsxResults = [];
+  const components = new Map(); // componentName -> fnPath
+  const componentByFnPathKey = new Map(); // fnPathKey -> componentName
+  const bindingToComponent = new Map(); // bindingPathKey -> componentName
+  const exportAliases = new Map(); // exportName -> componentName
+  let componentCounter = 0;
 
-    fnPath.traverse({
-      JSXElement(path) {
-        const {
-          html, script, deps
-        } = build(path, filePath)
+  const registerComponent = (fnPath, displayName = "Component", bindingPath = null) => {
+    if (!fnPath || !hasJsxReturn(fnPath)) return null;
+    const fnPathKey = getPathKey(fnPath);
+    const existing = componentByFnPathKey.get(fnPathKey);
+    if (existing) {
+      if (bindingPath) bindingToComponent.set(getBindingKey(bindingPath), existing);
+      return existing;
+    }
 
-        const wrapped = ` ( function (){
-          const _$root = _$.getParent()
-          ${script}
-        } )() `
+    componentCounter += 1;
+    const safeName = String(displayName || "Component").replace(/[^\w$]/g, "_");
+    const componentName = `__cmp_${componentCounter}_${safeName}`;
+    componentByFnPathKey.set(fnPathKey, componentName);
+    components.set(componentName, fnPath);
+    if (bindingPath) bindingToComponent.set(getBindingKey(bindingPath), componentName);
+    return componentName;
+  };
 
-        const newAst = parser.parseExpression(wrapped)
-        output.html[name] =  {
-          html,
-          deps
+  traverse(ast, {
+    FunctionDeclaration(path) {
+      const name = path.node.id?.name;
+      if (!name) return;
+      const binding = path.scope.getBinding(name);
+      if (!binding) return;
+      registerComponent(path, name, binding.path);
+    },
+    VariableDeclarator(path) {
+      if (!t.isIdentifier(path.node.id)) return;
+      const init = path.get("init");
+      if (!(init.isFunctionExpression() || init.isArrowFunctionExpression())) return;
+      const binding = path.scope.getBinding(path.node.id.name);
+      if (!binding) return;
+      registerComponent(init, path.node.id.name, binding.path);
+    }
+  });
+
+  traverse(ast, {
+    ExportDefaultDeclaration(path) {
+      const decl = path.get("declaration");
+      if (decl.isIdentifier()) {
+        const binding = path.scope.getBinding(decl.node.name);
+        if (!binding) return;
+        const key = bindingToComponent.get(getBindingKey(binding.path));
+        if (key) exportAliases.set("default", key);
+        return;
+      }
+
+      if (decl.isFunctionDeclaration()) {
+        const name = decl.node.id?.name || "default";
+        let key = null;
+        if (decl.node.id) {
+          const binding = path.scope.getBinding(decl.node.id.name);
+          if (binding) key = bindingToComponent.get(getBindingKey(binding.path));
         }
-        path.replaceWith(newAst)
-      },
-    });
+        if (!key) key = registerComponent(decl, name, null);
+        if (key) exportAliases.set("default", key);
+        return;
+      }
 
+      if (decl.isArrowFunctionExpression() || decl.isFunctionExpression()) {
+        const key = registerComponent(decl, "default", null);
+        if (key) exportAliases.set("default", key);
+      }
+    },
+
+    ExportNamedDeclaration(path) {
+      const decl = path.get("declaration");
+
+      if (decl && decl.node) {
+        if (decl.isFunctionDeclaration() && decl.node.id) {
+          const name = decl.node.id.name;
+          const binding = path.scope.getBinding(name);
+          if (!binding) return;
+          const key = bindingToComponent.get(getBindingKey(binding.path));
+          if (key) exportAliases.set(name, key);
+        } else if (decl.isVariableDeclaration()) {
+          for (const declarator of decl.get("declarations")) {
+            const id = declarator.node.id;
+            if (!t.isIdentifier(id)) continue;
+            const binding = path.scope.getBinding(id.name);
+            if (!binding) continue;
+            const key = bindingToComponent.get(getBindingKey(binding.path));
+            if (key) exportAliases.set(id.name, key);
+          }
+        }
+      }
+
+      for (const spec of path.node.specifiers || []) {
+        const localName = spec.local?.name;
+        const exportedName = spec.exported?.name;
+        if (!localName || !exportedName) continue;
+        const binding = path.scope.getBinding(localName);
+        if (!binding) continue;
+        const key = bindingToComponent.get(getBindingKey(binding.path));
+        if (key) exportAliases.set(exportedName, key);
+      }
+    }
+  });
+
+  const resolveSelfComponentName = (jsxPath, tag) => {
+    const binding = jsxPath.scope.getBinding(tag);
+    if (!binding) return null;
+    return bindingToComponent.get(getBindingKey(binding.path)) || null;
+  };
+
+  for (const [componentName, fnPath] of components.entries()) {
+    const roots = getRootJsxPaths(fnPath);
+    let firstCompiled = null;
+
+    for (const jsxPath of roots) {
+      if (!jsxPath.isJSXElement()) continue;
+      const compiled = build(jsxPath, filePath, { resolveSelfComponentName });
+      if (!firstCompiled) firstCompiled = compiled;
+
+      const wrapped = ` ( function (){
+          const _$root = _$.getParent()
+          ${compiled.script}
+        } )() `;
+      const newAst = parser.parseExpression(wrapped);
+      jsxPath.replaceWith(newAst);
+    }
+
+    if (firstCompiled) {
+      output.html[componentName] = {
+        html: firstCompiled.html,
+        deps: firstCompiled.deps
+      };
+    }
   }
 
-  const outputCode = generate.default(ast,
-    {},
-    code).code;
-  
-  output.script = outputCode
+  for (const [alias, key] of exportAliases.entries()) {
+    if (output.html[key]) output.html[alias] = output.html[key];
+  }
 
+  output.script = generate.default(ast, {}, code).code;
   return output;
 }

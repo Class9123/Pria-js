@@ -1,68 +1,129 @@
 class ForProcessor {
-  constructor(core) {
-    this.core = core;
+  constructor() {
+    this.directive = "$for";
+    this.priority = 90;
   }
 
-  process(node, expr) {
-    const children = node.children || []
-    const core = this.core;
+  parseLoopExpression(expr) {
+    const trimmed = String(expr || "").trim();
+    const match = trimmed.match(
+      /^(?:\(\s*([A-Za-z_$][\w$]*)\s*\)|([A-Za-z_$][\w$]*))\s+(?:in|of)\s+([\s\S]+)$/
+    );
+    if (!match) return null;
+    return {
+      itemName: (match[1] || match[2]).trim(),
+      sourceExpr: match[3].trim()
+    };
+  }
 
-    // Parse "item in items"
-    const [itemName, source] = expr.split(" in ").map(s => s.trim());
-    const createChildrenId = core.uidGen.nextCreateChildren() 
+  transform(ctx) {
+    const { core, path, directive } = ctx;
+    const expr = directive.expressionCode;
 
+    const parsed = this.parseLoopExpression(expr);
+    if (!parsed) {
+      throw new Error(`Invalid $for expression: "${expr}". Use "item in items".`);
+    }
+    const { itemName, sourceExpr } = parsed;
+    const createChildrenId = core.uidGen.nextCreateChildren();
+    const mountId = core.uidGen.nextLoop();
+    const clearId = core.uidGen.nextLoop();
+    const readSourceId = core.uidGen.nextLoop();
+
+    core.writeOpeningTag(path, { includeDirectives: false });
+    core.obj.html += "<template>";
     core.add(`
      function ${createChildrenId}(_$root,${itemName}) {
-    `)
-    core.path.push("_$root")
-    core.obj.html += "<template>";
-    core.processChildren(children);
+    `);
+    core.path.push("_$root");
+    core.processChildren(path);
+    core.path.pop();
     core.obj.html += "</template>";
-    core.path.pop()
+    core.writeClosingTag(path);
+
     const elId = core.uidGen.nextElement();
     const tplId = core.uidGen.nextTemplate();
-    const loopParent = core.uidGen.nextLoop()
-    const cloneId = core.uidGen.nextCloneId()
-    const mapId = core.uidGen.nextMap()
-  
+    const cloneId = core.uidGen.nextCloneId();
+    const mapId = core.uidGen.nextMap();
+    const anchorId = core.uidGen.nextComment();
+
     core.add(`
-  return _$root.f }
+  return _$root }
 const ${elId} = ${core.joinPath()}
 const ${tplId} = ${elId}.f
 ${tplId}.remove()
 const ${cloneId} = ${tplId}.cloneNode(true)
 const ${mapId} = []
+const ${anchorId} = document.createComment("for-end")
+${elId}.appendChild(${anchorId})
 
-${source}.forEach((_$local,index) => {
-  const _$root = ${cloneId}.cloneNode(true)
-  const _$out = ${createChildrenId}(_$root.content, _$local)
-  ${mapId}.push(_$out)
-  ${elId}.appendChild(_$out)
+function ${readSourceId}() {
+  const _$src = (${sourceExpr}) ?? [];
+  return Array.isArray(_$src) ? _$src : [];
+}
+
+function ${clearId}(_$record) {
+  if (!_$record) return;
+  let _$node = _$record.first;
+  while (_$node) {
+    const _$next = _$node.nextSibling;
+    _$node.remove();
+    if (_$node === _$record.last) break;
+    _$node = _$next;
+  }
+}
+
+function ${mountId}(${itemName}, _$before = ${anchorId}) {
+  const _$root = ${cloneId}.cloneNode(true).content
+  ${createChildrenId}(_$root, ${itemName})
+  let _$first = _$root.firstChild
+  let _$last = _$root.lastChild
+  if (!_$first) {
+    _$first = document.createComment("for-empty")
+    _$last = _$first
+    _$root.appendChild(_$first)
+  }
+  _$before.before(_$root)
+  return { first: _$first, last: _$last }
+}
+
+${readSourceId}().forEach((_$local) => {
+  ${mapId}.push(${mountId}(_$local, ${anchorId}))
 })
 
 _$.useEffect((config=null) => {
-  const data = ${source}
+  const data = ${readSourceId}()
   if (!config) return ;
   const index = config.index
   if (config.push){
-    const _$root = ${cloneId}.cloneNode(true)
-    const _$out = ${createChildrenId}(_$root.content, data[index] )
-    ${elId}.appendChild(_$out)
-    ${mapId}.push(_$out)
+    ${mapId}.push(${mountId}(data[index], ${anchorId}))
   } else if (config.setAt){
-    const _$root = ${cloneId}.cloneNode(true)
-    const _$out = ${createChildrenId}(_$root.content, data[index])
-    ${mapId}[index].replaceWith(_$out)
-    ${mapId}[index] = _$out
+    const _$old = ${mapId}[index]
+    if (!_$old) return;
+    const _$nextNode = _$old.first
+    ${mapId}[index] = ${mountId}(data[index], _$nextNode)
+    ${clearId}(_$old)
   } else if (config.remove){
-    ${mapId}[index].remove()
+    const _$old = ${mapId}[index]
+    if (!_$old) return;
+    ${clearId}(_$old)
     ${mapId}.splice(index, 1)
+  } else {
+    ${mapId}.forEach(${clearId})
+    ${mapId}.length = 0
+    data.forEach((_$local) => {
+      ${mapId}.push(${mountId}(_$local, ${anchorId}))
+    })
   }
   
 });
     `);
-    
-    return { shouldProcessChildren: false };
+    core.emitAttributeBindings(path, {
+      targetRef: elId,
+      includeDirectives: false
+    });
+
+    return { handled: true };
   }
 }
 

@@ -1,384 +1,301 @@
 # Pria
 
-> ⚠️ **Experimental Project** — Pria is in early development. APIs are unstable and subject to change. Not recommended for production use.
+Pria is an HTML-first reactive framework.
 
-**Pria** is a compile-time, HTML-first reactive framework that turns your JSX into real HTML strings and minimal JavaScript—no Virtual DOM, no runtime diffing, no `querySelector` lookups.
+You write JSX like React.
+Pria compiles it into mostly-static HTML + tiny DOM update code.
+So the browser does less work and you still get reactive UI.
 
----
+Short version: React-like reactivity, but your HTML goes to the gym first.
 
-## Why Pria Exists
+> Experimental project: APIs can still change.
 
-Most modern frameworks do a lot of work in the browser:
+## Why this exists
 
-- React builds a Virtual DOM and diffs it against the real DOM
-- Vue compiles templates at runtime or uses a runtime renderer
-- Components are often re-executed or re-rendered to detect changes
+Most UI frameworks keep doing runtime work:
 
-Pria takes a different approach: **do as much as possible at compile time**.
+- render
+- diff
+- patch
+- repeat
 
-Instead of shipping a large runtime that figures out what changed and how to update the DOM, Pria:
+Pria tries to move that cost to compile time.
 
-1. **Compiles your JSX into static HTML** at build time
-2. **Generates tiny JavaScript** that knows exactly which DOM nodes to update
-3. **Avoids runtime guesswork** by calculating DOM paths during compilation
+- HTML is generated ahead of time.
+- DOM paths are precomputed.
+- Runtime only updates exactly what changed.
 
-The result? Your server can send plain HTML, and the browser runs minimal JavaScript to make it interactive.
+No virtual DOM here. Just real DOM and targeted updates.
 
----
+## Quick start
 
-## How Pria Works
+### 1. Install deps
 
-### The Big Idea
-
-When you write a component in Pria, the compiler:
-
-1. **Reads your JSX** and figures out which parts are static (never change) and which are dynamic (change based on state)
-2. **Generates an HTML string** for the entire component
-3. **Generates JavaScript code** that updates only the dynamic parts
-
-Here's the key innovation: **Pria doesn't use `querySelector` to find DOM elements.**
-
-Instead, it builds a **deterministic path** to each dynamic node using `.firstChild` and `.nextSibling` during compilation. This means the JavaScript knows exactly where to go in the DOM tree without searching.
-
----
-
-## DOM Traversal: No More `querySelector`
-
-### The Problem with `querySelector`
-
-Most frameworks update the DOM like this:
-
-```javascript
-// Find the element by class or ID
-const element = document.querySelector('.count');
-// Update it
-element.textContent = newValue;
+```bash
+yarn
 ```
 
-This is slow because:
-- The browser has to search the entire DOM tree
-- It happens over and over for every update
-- You need to add classes or IDs to everything
+### 2. Add Vite config
 
-### Pria's Solution: Compile-Time Paths
+`vite.config.js`
 
-Pria knows the exact structure of your HTML at compile time. So instead of searching, it generates code that walks directly to the right node:
+```js
+import { defineConfig } from "vite";
+import path from "path";
+import Scan from "./Package/plugin";
 
-```javascript
-// Start at the root
-let node = rootElement.firstChild;  // Go to first child
-node = node.nextSibling;            // Move to next sibling
-node.textContent = newValue;        // Update it
+export default defineConfig({
+  resolve: {
+    alias: {
+      pria: path.resolve(__dirname, "Package")
+    }
+  },
+  plugins: [Scan()]
+});
 ```
 
-### Step-by-Step Example
+### 3. Bootstrap entry
 
-Let's say you write this component:
+`src/index.js`
+
+```js
+Object.defineProperties(Node.prototype, {
+  f: { get() { return this.firstChild; } },
+  n: { get() { return this.nextSibling; } },
+  p: { get() { return this.previousSibling; } }
+});
+
+import App from "./App.jsx";
+import _$ from "pria/internal";
+
+const root = document.getElementById("app");
+_$.setParent(root.firstElementChild);
+App();
+root.style.display = "";
+```
+
+### 4. Run
+
+```bash
+yarn dev
+```
+
+Current plugin default root is `src/App.jsx`. Keep that file name/path, or update it in `Package/plugin.js`.
+
+## Core idea you must know
+
+Pria state values are **getter functions**.
+
+- Read with `count()` not `count`
+- Effects track dependencies by calling getters
+
+If you forget the `()`, your UI will politely do nothing.
+
+## Reactivity API
+
+Import from `pria`:
+
+```js
+import { useState, useEffect, useMemo, useArray } from "pria";
+```
+
+### `useState(initial)`
+
+```js
+const [count, setCount] = useState(0);
+
+count();          // read
+setCount(5);      // write
+setCount(p => p + 1);
+```
+
+### `useEffect(callback, deps)`
+
+- Runs immediately once.
+- Re-runs when tracked deps change.
+- `deps` must be an array of getter functions.
+
+```js
+useEffect(() => {
+  console.log("count changed:", count());
+}, [count]);
+```
+
+### `useMemo(fn)`
+
+Returns a getter for computed value.
+
+```js
+const doubled = useMemo(() => count() * 2);
+console.log(doubled());
+```
+
+### `useArray(initialArray)`
+
+Array state helper with incremental updates.
+
+```js
+const items = useArray(["a", "b"]);
+
+items();                  // read array
+items.push("c");
+items.setAt(0, "A");
+items.remove(1);
+items.pop();
+items.setNew(["x", "y"]);          // full replace
+items.setNew(prev => [...prev, "z"]);
+```
+
+`setNew` triggers a full list refresh signal.
+
+## Built-in JSX attributes (directives)
+
+These are Pria-specific attributes.
+
+## `$if`
+
+Mount/unmount element by condition.
 
 ```jsx
-function Counter() {
+<div $if={count() > 10}>Now you see me</div>
+```
+
+Use when element should not exist in DOM when false.
+
+## `$when`
+
+Toggle visibility using `display: none`.
+
+```jsx
+<div $when={isOpen()}>I stay mounted, just hidden</div>
+```
+
+Use when you want to preserve DOM state but hide it.
+
+## `$for`
+
+Loop rendering. Syntax:
+
+- `$for={item in source}`
+- `$for={item of source}`
+- `$for={(item) in source}`
+
+```jsx
+<ul>
+  <li $for={item in items()}>{item}</li>
+</ul>
+```
+
+Notes:
+
+- `source` must evaluate to an array.
+- Nested loops are supported.
+- Nested conditionals inside loops are supported.
+
+## `$ref`
+
+Access actual DOM node.
+
+```jsx
+<div $ref={el => console.log(el)} />
+```
+
+Or object ref style:
+
+```jsx
+const boxRef = { current: null };
+<div $ref={boxRef} />
+```
+
+## Regular attrs, events, spread
+
+Pria also supports normal JSX attributes and spread:
+
+```jsx
+<button
+  className={count() > 5 ? "hot" : "cold"}
+  onClick={() => setCount(p => p + 1)}
+  {...extraProps()}
+>
+  Click
+</button>
+```
+
+## Component composition
+
+Components inside components are supported, including cross-file imports.
+
+```jsx
+import Card from "./Card";
+
+export default function App() {
+  return <Card />;
+}
+```
+
+Nested component HTML is expanded during compile/scan phase.
+
+## Full example
+
+```jsx
+import { useState, useArray, useMemo, useEffect } from "pria";
+
+function Badge() {
+  return <strong>Badge</strong>;
+}
+
+export default function App() {
+  const [count, setCount] = useState(0);
+  const todos = useArray(["Ship", "Sleep"]);
+  const titleRef = { current: null };
+
+  const status = useMemo(() => (count() > 3 ? "busy" : "chill"));
+
+  useEffect(() => {
+    console.log("status:", status());
+  }, [status]);
+
   return (
-    <div>
-      <h1>Count</h1>
-      <p>{count}</p>
-    </div>
+    <main>
+      <h1 $ref={titleRef}>Count: {count()}</h1>
+
+      <p $when={count() % 2 === 0}>Visible only on even counts</p>
+      <p $if={count() > 2}>Appears only after 2</p>
+
+      <button onClick={() => setCount(p => p + 1)}>+1</button>
+      <button onClick={() => todos.push(`Todo ${count()}`)}>Add Todo</button>
+      <button onClick={() => todos.setNew(["Reset"]) }>Reset List</button>
+
+      <ul>
+        <li $for={todo in todos()}>
+          <Badge /> {todo}
+        </li>
+      </ul>
+    </main>
   );
 }
 ```
 
-**At compile time**, Pria analyzes the structure:
+## Practical rules
 
-```
-div (root)
-├── h1 ("Count")          ← Static, never changes
-└── p                      ← Container for dynamic content
-    └── {count}            ← Dynamic! Needs updates
-```
+1. Always call state getters (`x()`).
+2. Keep `useEffect` deps as getter functions (`[count, todos]`).
+3. Use `$if` for mount/unmount, `$when` for visibility.
+4. Use `$for` only with array-like sources (ideally arrays).
+5. Use `$ref` only when you really need DOM access.
 
-**Pria generates:**
+## Known limits (for now)
 
-1. **HTML output:**
-   ```html
-   <div><h1>Count</h1><p></p></div>
-   ```
+- Early-stage project, breaking changes can happen.
+- Error messages are improving but still basic.
+- API ergonomics are still evolving.
 
-2. **JavaScript output:**
-   ```javascript
-   // Navigate to the <p> tag's text node
-   let node = root.firstChild.nextSibling.firstChild;
-   
-   // Update function
-   function updateCount(newValue) {
-     node.textContent = newValue;
-   }
-   ```
+## Final vibe check
 
-**Why this is faster:**
+If you want:
 
-- No searching: we go directly to the node
-- No overhead: just simple property access
-- Predictable: the path never changes
+- real HTML first
+- tiny runtime updates
+- React-like mental model without React-sized runtime work
 
----
-
-## Compilation Model
-
-Pria's compilation happens in several clear steps:
-
-### 1. **Entry Point Scanning**
-Pria starts with your main file (e.g., `app.js`) and finds all component functions.
-
-### 2. **JSX Detection**
-The compiler looks for JSX inside function bodies using Babel to parse the code into an Abstract Syntax Tree (AST).
-
-### 3. **Static Analysis**
-For each piece of JSX, Pria determines:
-- Which parts are **static** (plain text, fixed attributes)
-- Which parts are **dynamic** (expressions like `{count}`)
-
-### 4. **HTML Generation**
-Pria walks the JSX tree and builds an HTML string. Dynamic values are replaced with their initial state.
-
-### 5. **JavaScript Generation**
-For every dynamic piece, Pria:
-- Calculates the DOM path (e.g., "first child, then next sibling")
-- Generates an update function that follows that path
-
-### 6. **Output**
-Two phases are made:
-- `static html` — The static HTML markup
-- `javascript for reactivity setup` — The reactive update logic
-
----
-
-zhzx## Output Format
-
-Pria separates concerns clearly:
-
-### HTML Output (Per Component)
-
-```html
-<!-- html -->
-<div><h1>Counter</h1><p></p></div>
-```
-
-This HTML can be:
-- Cached by a CDN
-- Pre-rendered on the server
-- Streamed to the browser
-- Reused across requests
-
-### JavaScript Output (Per File)
-
-```javascript
-// Reactive JavaScript 
-function Counter() {
-  const [count, setCount] = useState(0)
-  let countNode = root.firstChild.nextSibling.firstChild;
-  
-  // Update function
-  _$.useEffect(() => {
-    countNode.nodeValue = count();
-  })
-}
-```
-
-This JavaScript:
-- Is minimal and focused
-- Runs only when values change
-- Has zero framework overhead
-
----
-
-## Examples
-
-### Input: Simple Counter
-
-```jsx
-function Counter() {
-  return (
-    <div>
-      <h1>Count: {count}</h1>
-      <button>Increment</button>
-    </div>
-  );
-}
-```
-
-### Output: Generated HTML
-
-```html
-<div>
-  <h1>Count: </h1>
-  <button>Increment</button>
-</div>
-```
-
----
-
-## Current Capabilities
-
-### ✅ Implemented
-
-- **JSX compilation** — Functions with JSX are detected and processed
-- **Static HTML generation** — Each component outputs an HTML string
-- **Reactive updates** — Dynamic values generate update functions
-- **Attribute bindings** — Props and attributes are supported
-- **Text and expression grouping** — Adjacent text/expressions are batched
-- **Conditional rendering** — Basic `if` statement support
-- **Loop support** — Array mapping is processed
-- **Direct DOM references** — No `querySelector`, only `.firstChild`/`.nextSibling`
-
-### 🚧 Work in Progress
-
-> **Important:** These features are under active development and may not work reliably yet.
-
-- **Cross-file component imports** — Importing components from other files
-- **Nested component resolution** — Handling components that use other components
-- **Full dependency graph** — Tracking relationships between components
-- **Stable public API** — APIs may change without notice
-- **Error messages** — Compiler errors are minimal and may be unclear
-
----
-
-## Philosophy
-
-### HTML is Primary
-
-Pria treats HTML as a first-class output, not an afterthought. The HTML you generate is real, valid markup that works without JavaScript.
-
-### JavaScript is for Interactivity
-
-JavaScript exists only to update dynamic parts. If nothing changes, no JavaScript runs.
-
-### Compile Time > Runtime
-
-Decisions made at compile time don't need to be made in the browser. Pria pushes as much work as possible into the build step.
-
-### No Magic
-
-Pria doesn't do runtime magic or hidden transformations. What you write is close to what you get.
-
----
-
-## Comparison with Other Frameworks
-
-| Feature | Pria | React | Vue | Solid |
-|---------|------|-------|-----|-------|
-| **Compilation** | Compile-time only | Runtime + optional pre-compile | Runtime + compile options | Compile-time reactive |
-| **HTML Output** | Real HTML strings | Virtual DOM (JSX) | Template strings | JSX compiled to DOM |
-| **DOM Updates** | Direct node references | Virtual DOM diffing | Reactive template updates | Fine-grained reactivity |
-| **DOM Lookups** | `.firstChild`/`.nextSibling` | `querySelector` or refs | Template bindings | Direct references |
-| **Runtime Size** | Minimal (~1-2kb) | ~40kb+ | ~30kb+ | ~7kb+ |
-| **Hydration** | Direct attachment | Full tree reconciliation | Template matching | Granular hydration |
-
-### Key Differences
-
-**vs React:**
-- React diffs a Virtual DOM at runtime; Pria generates HTML at build time
-- React uses hooks and re-renders; Pria uses direct updates
-- React requires a large runtime; Pria's runtime is minimal
-
-**vs Vue:**
-- Vue compiles templates into render functions; Pria outputs HTML strings
-- Vue uses reactive proxies; Pria uses explicit update functions
-- Vue has a template syntax; Pria uses JSX
-
-**vs Solid:**
-- Both compile reactivity at build time
-- Solid uses fine-grained reactive primitives; Pria uses explicit paths
-- Solid stays in the DOM; Pria outputs HTML separately
-
----
-
-## Current Limitations
-
-Since Pria is experimental, here are the known limitations:
-
-### Architecture
-- No component imports across files yet
-- No nested component resolution
-- No component prop validation
-- Limited error reporting
-
-### Features
-- No event handling system yet
-- No built-in state management
-- No lifecycle hooks
-- No context or global state
-
-### Developer Experience
-- No TypeScript support yet
-- No IDE plugins
-- No dev server
-- No hot module reloading
-
----
-
-## Roadmap
-
-### Near Term
-- [ ] Component import resolution
-- [ ] Event handler compilation
-- [ ] Basic state management primitives
-- [ ] Improved error messages
-
-### Medium Term
-- [ ] TypeScript support
-- [ ] Dev server with HMR
-- [ ] Component composition patterns
-- [ ] Testing utilities
-
-### Long Term
-- [ ] Streaming SSR
-- [ ] Partial hydration
-- [ ] IDE tooling
-- [ ] Performance profiling tools
-
----
-
-## Project Status
-
-**Pria is an experimental research project.** It explores what's possible when you prioritize:
-
-- Compile-time optimization
-- HTML-first thinking
-- Minimal runtime overhead
-- Predictable DOM updates
-
-If you're interested in:
-- How compilers work
-- Framework internals
-- Performance optimization
-- Alternative frontend architectures
-
-...then Pria might be an interesting learning resource.
-
-**Not ready for production.** Use at your own risk.
-
----
-
-## Contributing
-
-Pria is open to contributions, feedback, and ideas. Since the project is in early stages, expect breaking changes.
-
----
-
-## License
-
-MIT (Placeholder — confirm license details before distribution)
-
----
-
-## Learn More
-
-To understand Pria's internals:
-
-1. Read the source code (it's intentionally kept simple)
-2. Look at the generated HTML and JS outputs
-3. Experiment with small examples
-4. Compare with other compile-time frameworks like Solid and Svelte
-
----
-
-**Built with curiosity. Compiled with care.**
+Pria is your weird little friend.

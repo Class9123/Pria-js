@@ -1,58 +1,78 @@
 import scanAndCache from "./pria-plugin/scanComponent.js";
-import fs from "fs";
+import {formatHtml} from "./compiler/helpers/index.js"
 import addComponentHtml from "./compiler/helpers/addhtml.js"
+import { formatPriaError, toPriaError } from "./compiler/helpers/error.js";
+
+function reportPriaError(err, context = {}) {
+  const normalized = toPriaError(err, context);
+  console.error("\n" + formatPriaError(normalized, context) + "\n");
+  throw normalized;
+}
 
 export default function Scan() {
-  const rootFile = "/data/data/com.termux/files/home/Pria-js/src/App.jsx";
+  const rootFile = "src/App.jsx";
 
   return {
     name: "vite-scan-priaJs-plugin",
     configureServer(server) {
-      scanAndCache(rootFile)
+      try {
+        scanAndCache(rootFile);
+      } catch (err) {
+        reportPriaError(err, { filePath: rootFile, stage: "startup" });
+      }
       server.watcher.add(rootFile);
     },
 
     transformIndexHtml(indexHtml) {
-      let html 
-      const data = scanAndCache(rootFile);
+      try {
+        let html;
+        const data = scanAndCache(rootFile);
 
-      if (data) {
-        html = addComponentHtml(data, "App")
-      }
-      else html = "Dev time"
-      console.log(html)
-      indexHtml = indexHtml.replace(
-        /<div id="app">\s*<\/div>/,
-        `<div id="app">${html}</div> 
+        if (data) {
+          html = addComponentHtml(data, "App");
+        }
+        else html = "Dev time";
+        indexHtml = indexHtml.replace(
+          /<div id="app">\s*<\/div>/,
+          `<div id="app">${html}</div> 
         <script> 
-        console.log(\`${html}\`)
+        console.log(\`${formatHtml(html)}\`)
         </script>`
-      );
-      return indexHtml
+        );
+        return indexHtml;
+      } catch (err) {
+        reportPriaError(err, { filePath: rootFile, stage: "html" });
+      }
     },
 
     load(id) {
       if (!id.endsWith(".jsx")) return null;
-      const absFile = id;
-      const data = scanAndCache(absFile);
-      let script ;
-      if (data) script = data.script 
-      else script=`
+      try {
+        const absFile = id;
+        const data = scanAndCache(absFile);
+        let script;
+        if (data) script = data.script;
+        else script=`
       export default function App(){
         console.log("Dev time ")
       }
-      `
-      
-      console.log(script)
+      `;
 
-      return script;
+        return script;
+      } catch (err) {
+        reportPriaError(err, { filePath: id, stage: "load" });
+      }
     },
     handleHotUpdate( {
-      file, server, modules
+      file, server
     }) {
       if (!file.endsWith(".jsx")) return [];
-      scanAndCache(file)
-      server.restart()
+      try {
+        scanAndCache(file);
+        server.restart();
+      } catch (err) {
+        reportPriaError(err, { filePath: file, stage: "hmr" });
+      }
     }
 
   };

@@ -14,7 +14,6 @@ function flushEffectQueue() {
 
   const effects = Array.from(globalEffectQueue);
   globalEffectQueue.clear();
-  const start = performance.now();
   for (let i = 0; i < effects.length; i++) {
     try {
       const effect = effects[i];
@@ -24,6 +23,4 @@ function flushEffectQueue() {
       console.error("Effect error:", err);
     }
   }
-  const end = performance.now();
-  console.log(`Timen taken ${(end - start).toFixed(7)}ms`);
 }

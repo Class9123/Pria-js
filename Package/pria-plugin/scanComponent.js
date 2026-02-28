@@ -1,5 +1,6 @@
 import fs from "fs";
 import transformPri from "../compiler/index.js";
+import { throwPriaError } from "../compiler/helpers/error.js";
 const cacheMap = new Map();
 
 export default function scanAndCache(absFile) {
@@ -13,6 +14,26 @@ export default function scanAndCache(absFile) {
 
 
 function scanComponent(filePath) {
-  const code = fs.readFileSync(filePath, "utf-8");
-  return transformPri(code, filePath);
+  let code = "";
+  try {
+    code = fs.readFileSync(filePath, "utf-8");
+  } catch (err) {
+    throwPriaError(err, {
+      stage: "read",
+      filePath,
+      message: `Failed to read component file: ${filePath}`
+    });
+  }
+
+  try {
+    const out = transformPri(code, filePath);
+    out.__filePath = filePath;
+    return out;
+  } catch (err) {
+    throwPriaError(err, {
+      stage: "compile",
+      filePath,
+      sourceCode: code
+    });
+  }
 }
